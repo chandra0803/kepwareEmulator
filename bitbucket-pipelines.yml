@@ -1,0 +1,78 @@
+image: gradle:jdk17
+clone:
+  # sonar scanner needs the full history to assign issues properly
+  depth: full
+definitions:
+  services:
+  steps:
+    - step: &buildAndTag
+        name: Build and Tag
+        caches:
+          - gradle
+        script:
+          - chmod -R +x ./build-scripts
+          - export ARTIFACT_VERSION=$(./build-scripts/update-version.sh)
+          - export SONAR_SCANNER_OPTS="-Xmx1024m"
+          - export commit_message=$(git show -s --format=%B $BITBUCKET_COMMIT)
+          - export TICKET_NUMBER=$(echo "$commit_message" | grep -o -E '[A-Z]+-[0-9]+' | sed -n '1p')
+          # build with sonar
+          - bash ./gradlew build sonarqube -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+          # publish to artifactory
+          - bash ./gradlew artifactoryPublish -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+          # update changelog
+          - bash ./gradlew generateGitChangelog -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+          - apt-get update && apt-get install -y curl jq
+          - >
+            export access_token=$(curl -s -X POST -u "${CLIENT_ID}:${CLIENT_SECRET}" \
+              https://bitbucket.org/site/oauth2/access_token \
+              -d grant_type=client_credentials -d scopes="repository"| jq --raw-output '.access_token')
+          - git remote set-url origin "https://x-token-auth:${access_token}@bitbucket.org/${BITBUCKET_REPO_OWNER}/${BITBUCKET_REPO_SLUG}"
+          - git add .
+          - git commit -m "${TICKET_NUMBER} - [skip ci] update to ${ARTIFACT_VERSION}"
+          - git push
+          - git tag $ARTIFACT_VERSION
+          - git push origin --tags
+pipelines:
+  pull-requests:
+    '**':
+      - step:
+          name: Build
+          caches:
+            - gradle
+          script:
+            - export SONAR_SCANNER_OPTS="-Xmx1024m"
+            - bash ./gradlew build sonarqube -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+  branches:
+    master:
+      - step: *buildAndTag
+    release/*:
+      - step: *buildAndTag
+  custom:
+    release:
+      - step:
+          name: Build and Tag
+          caches:
+            - gradle
+          script:
+            - chmod -R +x ./build-scripts
+            - export ARTIFACT_VERSION=$(./build-scripts/release.sh)
+            - export SONAR_SCANNER_OPTS="-Xmx1024m"
+            - export commit_message=$(git show -s --format=%B $BITBUCKET_COMMIT)
+            - export TICKET_NUMBER=$(echo "$commit_message" | grep -o -E '[A-Z]+-[0-9]+' | sed -n '1p')
+            # build with sonar
+            - bash ./gradlew build sonarqube -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+            # publish to artifactory
+            - bash ./gradlew artifactoryPublish -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+            # update changelog
+            - bash ./gradlew generateGitChangelog -Partifactory_user=$ARTIFACTORY_USER -Partifactory_password=$ARTIFACTORY_PASSWORD
+            - apt-get update && apt-get install -y curl jq
+            - >
+              export access_token=$(curl -s -X POST -u "${CLIENT_ID}:${CLIENT_SECRET}" \
+                https://bitbucket.org/site/oauth2/access_token \
+                -d grant_type=client_credentials -d scopes="repository"| jq --raw-output '.access_token')
+            - git remote set-url origin "https://x-token-auth:${access_token}@bitbucket.org/${BITBUCKET_REPO_OWNER}/${BITBUCKET_REPO_SLUG}"
+            - git add .
+            - git commit -m "${TICKET_NUMBER} - [skip ci] update to ${ARTIFACT_VERSION}"
+            - git push
+            - git tag $ARTIFACT_VERSION
+            - git push origin --tags

@@ -1,0 +1,138 @@
+import se.bjurr.gitchangelog.plugin.gradle.GitChangelogTask
+
+buildscript {
+    dependencies {
+        classpath("io.spring.javaformat:spring-javaformat-gradle-plugin:0.0.41")
+    }
+}
+
+plugins {
+    id "org.springframework.boot" version "3.2.3"
+    id "io.spring.dependency-management" version "1.1.4"
+    id "java"
+    id "se.bjurr.gitchangelog.git-changelog-gradle-plugin" version "1.79.0"
+    id "com.jfrog.artifactory" version "5.2.0"
+    id 'org.gradle.maven-publish'
+    id "org.sonarqube" version "5.0.0.4638"
+}
+repositories {
+    mavenCentral()
+    maven {
+        url = uri("${project.property("artifactory_contextUrl")}/${project.property("artifactory_resolve_repository")}")
+        credentials {
+            username "$artifactory_user"
+            password "$artifactory_password"
+        }
+    }
+}
+
+group = "com.kpi.opto"
+sourceCompatibility = JavaVersion.VERSION_17
+targetCompatibility = JavaVersion.VERSION_17
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+configurations {
+    all {
+        exclude group: "org.springframework.boot", module: "spring-boot-starter-logging"
+    }
+}
+dependencies {
+    annotationProcessor "org.springframework.boot:spring-boot-configuration-processor"
+    annotationProcessor "org.projectlombok:lombok"
+    compileOnly "org.projectlombok:lombok"
+    implementation "org.springframework.boot:spring-boot-starter-integration"
+    implementation "org.springframework.cloud:spring-cloud-config-client"
+    implementation "org.apache.logging.log4j:log4j-slf4j2-impl:2.21.1"
+    implementation "org.springframework.boot:spring-boot-starter-web"
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0"
+    implementation "org.springframework.boot:spring-boot-starter-webflux"
+    implementation "com.fasterxml.jackson.core:jackson-annotations"
+    implementation "com.fasterxml.jackson.core:jackson-core"
+    implementation "com.fasterxml.jackson.core:jackson-databind"
+    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310"
+    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml"
+    implementation "com.lmax:disruptor:3.4.4"
+    implementation "org.modelmapper:modelmapper:3.1.0"
+    implementation "com.github.ulisesbocchio:jasypt-spring-boot:3.0.4"
+    // RabbitMQ
+    implementation "org.springframework.boot:spring-boot-starter-amqp"
+    testImplementation "org.springframework.boot:spring-boot-starter-test"
+    //kpi
+    implementation "com.kpi.roboticshub:rh-client-api:1.13.0:lib"
+    //Test
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.10.2"
+    testImplementation "org.springframework.boot:spring-boot-starter-test"
+    testImplementation "org.springframework.integration:spring-integration-test"
+    testImplementation "org.springframework.cloud:spring-cloud-stream-test-support"
+    testImplementation "org.junit.jupiter:junit-jupiter-api:5.10.2"
+    testImplementation "org.junit.jupiter:junit-jupiter-params:5.10.2"
+}
+
+
+ext {
+    set("springCloudVersion","2023.0.0")
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
+}
+
+// default bootJar task
+tasks.named("bootJar") {
+    enabled = true
+}
+
+// rename -plain to -lib jar
+tasks.named("jar") {
+    archiveClassifier.set("lib")
+    enabled = true
+}
+
+// add test task
+tasks.named("test") {
+    useJUnitPlatform()
+}
+
+// add task to manage change log
+tasks.register("generateGitChangelog", GitChangelogTask) {
+    fromRepo = "$projectDir"
+    file = file("CHANGELOG.md")
+    untaggedName = "${project.version}"
+    ignoreCommitsIfMessageMatches = ".*\\[skip ci\\].*"
+}
+
+// allows publication of maven artifacts by artifactory
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifact(tasks.getByName("jar"))
+        }
+    }
+}
+
+// allows publication and resolution of artifacts to and from artifactory
+artifactory {
+    contextUrl = "${project.property("artifactory_contextUrl")}"
+    publish {
+        clientConfig.setIncludeEnvVars(true)
+        repository {
+            repoKey = "${project.property("artifactory_publish_repository")}"
+            username = "${project.property("artifactory_user")}"
+            password = "${project.property("artifactory_password")}"
+            //maven = true
+        }
+        defaults {
+            publications("mavenJava")
+            publishArtifacts = true
+            publishPom = true
+        }
+    }
+
+}
